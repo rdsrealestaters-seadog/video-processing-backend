@@ -1,5 +1,4 @@
 from flask import Flask, request, jsonify
-import requests
 import os
 import subprocess
 
@@ -11,20 +10,17 @@ def home():
 
 @app.route("/process", methods=["POST"])
 def process():
-    data = request.json
-    file_url = data.get("file_url")
-    file_name = data.get("file_name")
-
-    if not file_url:
-        return jsonify({"error": "No file URL provided"}), 400
-
     try:
-        # Download file
-        response = requests.get(file_url)
+        # Get file from multipart form-data
+        if "file" not in request.files:
+            return jsonify({"error": "No file uploaded"}), 400
+
+        uploaded_file = request.files["file"]
+        file_name = uploaded_file.filename
         file_path = f"/tmp/{file_name}"
 
-        with open(file_path, "wb") as f:
-            f.write(response.content)
+        # Save uploaded file
+        uploaded_file.save(file_path)
 
         # Extract audio using ffmpeg
         audio_path = file_path.replace(".mp4", ".mp3")
