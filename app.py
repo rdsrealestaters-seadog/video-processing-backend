@@ -1,26 +1,43 @@
 from flask import Flask, request, jsonify
 import threading
 import subprocess
+import requests
 import os
 
 app = Flask(__name__)
 
-def extract_audio(file_path):
+def download_and_extract(file_url, file_name):
     try:
-        audio_path = file_path.replace(".mp4", ".mp3")
+        video_path = f"/tmp/{file_name}"
+        audio_path = video_path.rsplit(".", 1)[0] + ".mp3"
+
+        response = requests.get(file_url, stream=True)
+        response.raise_for_status()
+
+        with open(video_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
 
         cmd = [
             "ffmpeg",
             "-y",
-            "-i", file_path,
+            "-i", video_path,
             "-vn",
             "-acodec", "mp3",
             audio_path
         ]
 
-        subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            print("FFmpeg failed:")
+            print(result.stderr)
+        else:
+            print(f"Audio extracted successfully: {audio_path}")
+
     except Exception as e:
-        print(f"Audio extraction failed: {e}")
+        print(f"Background processing failed: {e}")
 
 @app.route("/")
 def home():
@@ -29,22 +46,26 @@ def home():
 @app.route("/process", methods=["POST"])
 def process():
     try:
-        if "file" not in request.files:
-            return jsonify({"error": "No file uploaded"}), 400
+        data = request.get_json()
 
-        uploaded_file = request.files["file"]
-        file_name = uploaded_file.filename
-        file_path = f"/tmp/{file_name}"
+        if not data:
+            return jsonify({"error": "No JSON received"}), 400
 
-        uploaded_file.save(file_path)
+        file_url = data.get("file_url")
+        file_name = data.get("file_name")
 
-        thread = threading.Thread(target=extract_audio, args=(file_path,))
+        if not file_url or not file_name:
+            return jsonify({"error": "Missing file_url or file_name"}), 400
+
+        thread = threading.Thread(
+            target=download_and_extract,
+            args=(file_url, file_name)
+        )
         thread.start()
 
         return jsonify({
             "status": "received",
-            "video_file": file_path,
-            "message": "File received and audio extraction started"
+            "message": "Processing started"
         })
 
     except Exception as e:
