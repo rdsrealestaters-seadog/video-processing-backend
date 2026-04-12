@@ -1,4 +1,6 @@
 from flask import Flask, request, jsonify
+import requests
+import os
 
 app = Flask(__name__)
 
@@ -9,7 +11,27 @@ def home():
 @app.route("/process", methods=["POST"])
 def process():
     data = request.json
-    return jsonify({"status": "received", "data": data})
+    file_url = data.get("file_url")
+    file_name = data.get("file_name")
+
+    if not file_url:
+        return jsonify({"error": "No file URL provided"}), 400
+
+    try:
+        # Download file
+        response = requests.get(file_url)
+        file_path = f"/tmp/{file_name}"
+
+        with open(file_path, "wb") as f:
+            f.write(response.content)
+
+        return jsonify({
+            "status": "downloaded",
+            "file_saved_as": file_path
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
