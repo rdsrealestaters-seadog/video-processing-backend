@@ -1,28 +1,12 @@
 from flask import Flask, request, jsonify
-import os
+import threading
 import subprocess
+import os
 
 app = Flask(__name__)
 
-@app.route("/")
-def home():
-    return "Backend is running"
-
-@app.route("/process", methods=["POST"])
-def process():
+def extract_audio(file_path):
     try:
-        # Get file from multipart form-data
-        if "file" not in request.files:
-            return jsonify({"error": "No file uploaded"}), 400
-
-        uploaded_file = request.files["file"]
-        file_name = uploaded_file.filename
-        file_path = f"/tmp/{file_name}"
-
-        # Save uploaded file
-        uploaded_file.save(file_path)
-
-        # Extract audio using ffmpeg
         audio_path = file_path.replace(".mp4", ".mp3")
 
         cmd = [
@@ -34,19 +18,33 @@ def process():
             audio_path
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        subprocess.run(cmd, capture_output=True, text=True)
+    except Exception as e:
+        print(f"Audio extraction failed: {e}")
 
-        if result.returncode != 0:
-            return jsonify({
-                "status": "error",
-                "stage": "audio_extraction",
-                "message": result.stderr
-            }), 500
+@app.route("/")
+def home():
+    return "Backend is running"
+
+@app.route("/process", methods=["POST"])
+def process():
+    try:
+        if "file" not in request.files:
+            return jsonify({"error": "No file uploaded"}), 400
+
+        uploaded_file = request.files["file"]
+        file_name = uploaded_file.filename
+        file_path = f"/tmp/{file_name}"
+
+        uploaded_file.save(file_path)
+
+        thread = threading.Thread(target=extract_audio, args=(file_path,))
+        thread.start()
 
         return jsonify({
-            "status": "audio_extracted",
+            "status": "received",
             "video_file": file_path,
-            "audio_file": audio_path
+            "message": "File received and audio extraction started"
         })
 
     except Exception as e:
