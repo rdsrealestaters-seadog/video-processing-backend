@@ -6,18 +6,9 @@ import os
 
 app = Flask(__name__)
 
-def download_and_extract(file_url, file_name):
+def extract_audio_from_file(video_path):
     try:
-        video_path = f"/tmp/{file_name}"
-        audio_path = video_path.rsplit(".", 1)[0] + ".mp3"
-
-        response = requests.get(file_url, stream=True)
-        response.raise_for_status()
-
-        with open(video_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
+        audio_path = os.path.splitext(video_path)[0] + ".mp3"
 
         cmd = [
             "ffmpeg",
@@ -39,6 +30,23 @@ def download_and_extract(file_url, file_name):
     except Exception as e:
         print(f"Background processing failed: {e}")
 
+def download_and_extract(file_url, file_name):
+    try:
+        video_path = f"/tmp/{file_name}"
+
+        response = requests.get(file_url, stream=True)
+        response.raise_for_status()
+
+        with open(video_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+
+        extract_audio_from_file(video_path)
+
+    except Exception as e:
+        print(f"Background download processing failed: {e}")
+
 @app.route("/")
 def home():
     return "Backend is running"
@@ -46,27 +54,48 @@ def home():
 @app.route("/process", methods=["POST"])
 def process():
     try:
-        data = request.get_json()
+        # Path 1: actual uploaded file
+        if "file" in request.files:
+            uploaded_file = request.files["file"]
+            file_name = request.form.get("file_name") or uploaded_file.filename
 
-        if not data:
-            return jsonify({"error": "No JSON received"}), 400
+            if not file_name:
+                return jsonify({"error": "Missing file_name"}), 400
 
-        file_url = data.get("file_url")
-        file_name = data.get("file_name")
+            video_path = f"/tmp/{file_name}"
+            uploaded_file.save(video_path)
 
-        if not file_url or not file_name:
-            return jsonify({"error": "Missing file_url or file_name"}), 400
+            thread = threading.Thread(target=extract_audio_from_file, args=(video_path,))
+            thread.start()
 
-        thread = threading.Thread(
-            target=download_and_extract,
-            args=(file_url, file_name)
-        )
-        thread.start()
+            return jsonify({
+                "status": "received",
+                "message": "Uploaded file received and processing started",
+                "file_name": file_name
+            }), 200
 
-        return jsonify({
-            "status": "received",
-            "message": "Processing started"
-        })
+        # Path 2: JSON with URL
+        data = request.get_json(silent=True)
+        if data:
+            file_url = data.get("file_url")
+            file_name = data.get("file_name")
+
+            if not file_url or not file_name:
+                return jsonify({"error": "Missing file_url or file_name"}), 400
+
+            thread = threading.Thread(
+                target=download_and_extract,
+                args=(file_url, file_name)
+            )
+            thread.start()
+
+            return jsonify({
+                "status": "received",
+                "message": "URL received and processing started",
+                "file_name": file_name
+            }), 200
+
+        return jsonify({"error": "No valid file upload or JSON body received"}), 400
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
