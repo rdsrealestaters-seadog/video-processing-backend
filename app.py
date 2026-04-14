@@ -4,7 +4,6 @@ import re
 import uuid
 import threading
 import subprocess
-import requests
 
 app = Flask(__name__)
 
@@ -20,18 +19,15 @@ def home():
 
 @app.route("/transcribe", methods=["POST"])
 def transcribe():
-    data = request.get_json(silent=True)
+    if "file" not in request.files:
+        return jsonify({"error": "Missing uploaded file"}), 400
 
-    if not data or "file_id" not in data:
-        return jsonify({"error": "Missing file_id"}), 400
-
-    file_id = data["file_id"]
-    file_name = data.get("file_name", "input_video.mp4")
+    uploaded_file = request.files["file"]
+    file_name = uploaded_file.filename or "input_video.mp4"
     job_id = str(uuid.uuid4())
 
     JOBS[job_id] = {
         "status": "queued",
-        "file_id": file_id,
         "file_name": file_name,
         "video_path": None,
         "audio_path": None,
@@ -39,9 +35,20 @@ def transcribe():
         "error": None
     }
 
+    job_dir = os.path.join(WORKDIR, job_id)
+    os.makedirs(job_dir, exist_ok=True)
+
+    safe_name = sanitize_filename(file_name)
+    if not safe_name.lower().endswith((".mp4", ".mov", ".m4v", ".webm", ".avi", ".mkv")):
+        safe_name = safe_name + ".mp4"
+
+    video_path = os.path.join(job_dir, safe_name)
+    uploaded_file.save(video_path)
+    JOBS[job_id]["video_path"] = video_path
+
     thread = threading.Thread(
         target=process_video_job,
-        args=(job_id, file_id, file_name),
+        args=(job_id, video_path),
         daemon=True
     )
     thread.start()
@@ -63,28 +70,17 @@ def get_job(job_id):
     return jsonify(job), 200
 
 
-def process_video_job(job_id, file_id, file_name):
-    job_dir = os.path.join(WORKDIR, job_id)
-    os.makedirs(job_dir, exist_ok=True)
-
-    safe_name = sanitize_filename(file_name)
-    if not safe_name.lower().endswith((".mp4", ".mov", ".m4v", ".webm", ".avi", ".mkv")):
-        safe_name = safe_name + ".mp4"
-
-    video_path = os.path.join(job_dir, safe_name)
+def process_video_job(job_id, video_path):
+    job_dir = os.path.dirname(video_path)
     audio_path = os.path.join(job_dir, "audio.mp3")
 
     try:
-        JOBS[job_id]["status"] = "downloading"
-        download_google_drive_file(file_id, video_path)
-        JOBS[job_id]["video_path"] = video_path
-
         JOBS[job_id]["status"] = "extracting_audio"
         extract_audio(video_path, audio_path)
         JOBS[job_id]["audio_path"] = audio_path
 
         JOBS[job_id]["status"] = "transcribing"
-        JOBS[job_id]["transcript"] = f"Audio extracted successfully from Google Drive file_id {file_id}"
+        JOBS[job_id]["transcript"] = f"Audio extracted successfully from uploaded file {os.path.basename(video_path)}"
 
         JOBS[job_id]["status"] = "complete"
 
@@ -96,52 +92,6 @@ def process_video_job(job_id, file_id, file_name):
 def sanitize_filename(name):
     name = os.path.basename(name)
     return re.sub(r'[^A-Za-z0-9._-]+', '_', name)
-
-
-def download_google_drive_file(file_id, output_path):
-    session = requests.Session()
-    base_url = "https://drive.google.com/uc?export=download"
-
-    response = session.get(
-        base_url,
-        params={"id": file_id},
-        stream=True,
-        timeout=300
-    )
-    response.raise_for_status()
-
-    confirm_token = get_confirm_token(response)
-
-    if confirm_token:
-        response.close()
-        response = session.get(
-            base_url,
-            params={"id": file_id, "confirm": confirm_token},
-            stream=True,
-            timeout=300
-        )
-        response.raise_for_status()
-
-    content_type = response.headers.get("Content-Type", "")
-    if "text/html" in content_type.lower():
-        preview = response.text[:500]
-        raise RuntimeError(
-            "Google Drive did not return a direct file download. "
-            "Make sure the file is shared so Render can access it. "
-            f"Preview: {preview}"
-        )
-
-    with open(output_path, "wb") as f:
-        for chunk in response.iter_content(chunk_size=1024 * 1024):
-            if chunk:
-                f.write(chunk)
-
-
-def get_confirm_token(response):
-    for key, value in response.cookies.items():
-        if key.startswith("download_warning"):
-            return value
-    return None
 
 
 def extract_audio(video_path, audio_path):
