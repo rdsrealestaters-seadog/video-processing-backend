@@ -32,6 +32,7 @@ def transcribe():
         "file_url": file_url,
         "video_path": None,
         "audio_path": None,
+        "transcript": None,
         "error": None
     }
 
@@ -41,7 +42,7 @@ def transcribe():
     return jsonify({
         "status": "accepted",
         "job_id": job_id,
-        "check_status_url": f"/jobs/{job_id}"
+        "check_status_url": f"https://video-processing-backend-5z0e.onrender.com/jobs/{job_id}"
     }), 202
 
 
@@ -64,14 +65,18 @@ def process_video_job(job_id, file_url):
 
     try:
         JOBS[job_id]["status"] = "downloading"
-
         download_file(file_url, video_path)
         JOBS[job_id]["video_path"] = video_path
 
         JOBS[job_id]["status"] = "extracting_audio"
-
         extract_audio(video_path, audio_path)
         JOBS[job_id]["audio_path"] = audio_path
+
+        JOBS[job_id]["status"] = "transcribing"
+
+        # Placeholder transcript for proof-of-flow testing
+        # Real transcription engine gets added next
+        JOBS[job_id]["transcript"] = f"Audio extracted successfully from {file_url}"
 
         JOBS[job_id]["status"] = "complete"
 
